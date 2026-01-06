@@ -1,0 +1,369 @@
+---
+title: "Bayesian Analysis of US Election Data"
+author: '087074'
+date: "January 2021"
+output: pdf_document
+---
+
+During the Covid-19 outbreak, Joe Biden beat Donald Trump to become the next President of the United States. In this research paper, I will be performing a Bayesian analysis on 2020 US election data to explore how important Covid-19 might have been in influencing state results in the elections. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(coda)
+library(tidyverse)
+library(bayesplot)
+library(rstan)
+options(mc.cores = parallel::detectCores())
+library(reshape2)
+library(truncnorm)
+library(taRifx)
+library(dplyr)
+library(foreach)
+library(knitr)
+```
+
+The rds file "USelectionData.rds" stores data on the 2020 US elections.
+```{r}
+USelectionData <- readRDS("USelectionData.rds")
+```
+I have transformed the raw data into a dataset that is in a more useful format for analysis. The new dataset contains information on a different state in each row. Each row also has a target variable which is the winner of the state i.e. Donald Trump or Joe Biden.
+```{r}
+WithWinner <-  group_by(USelectionData,State) %>%  # data wrangling
+  mutate(Winner=Candidate[which.max(TotalVotes)]) %>% ungroup() %>%
+  dplyr::select(State, Candidate, Winner, TotalVotes, Party, Cases, Deaths, TotalPop, 
+                Men, Women, Hispanic, White, Black, Native, Asian, Pacific, Citizen, 
+                Poverty, IncomePerCap, Employed, Professional, Service, Office, 
+                Construction, Production)
+# filter the data to only consider Biden vs Trump
+USelectionDataBT <- filter(WithWinner, Candidate %in% c("Donald Trump", "Joe Biden"))
+BidenTrumpWinner <- group_by(USelectionDataBT, State, Cases, Deaths, TotalPop, Men, 
+                             Women, Hispanic, White, Black, Native, Asian, Pacific, 
+                             Citizen, Poverty, IncomePerCap, Employed, Professional, 
+                             Service, Office, Construction, Production) %>% 
+  summarise(Winner = Winner[1], .groups = 'drop') %>% ungroup()
+```
+The statistics on the sex, race, income level and occupation of states are all in percentages, whereas Covid-19 cases and deaths are not. It is important that the variables are in the same order of magnitude to ensure an accurate analysis, therefore I have transformed the total number of cases and deaths of Covid-19 per state into the percentages of cases and deaths of Covid-19 for each state.
+```{r}
+BidenTrumpWinner$CasesPerPopulationPercent <- # calculate the percentage of Covid-19 
+  (BidenTrumpWinner$Cases/BidenTrumpWinner$TotalPop)*100  # cases and deaths  
+BidenTrumpWinner$DeathsPerPopulationPercent <-             # in each state
+  (BidenTrumpWinner$Deaths/BidenTrumpWinner$TotalPop)*100
+```
+To understand the effect that the variables have on who won each state, I have performed some preliminary data analysis. For this analysis, I have grouped the variables into four categories: those concerning race, income, profession and Covid-19. Through qualitatively analyzing graphs, we can gather an intuition as to which variables will be good indicators as to who won each state.
+
+From this graph, we can see that states with a higher percentage of white people tend to be won by Donald Trump and that states with high levels of Hispanic and Asian people tend to be won by Joe Biden.
+```{r}
+# select the variables relating to race
+DataVisualisaionRace <- BidenTrumpWinner %>% select(Winner, White, Hispanic, Black, 
+                                                    Citizen, Asian, Native)
+VisualisationRace <- melt(DataVisualisaionRace, id.vars="Winner")
+ggplot(VisualisationRace) +    # plot a point graph of the data
+  geom_point(aes(x=value, y=Winner, colour=variable)) +
+  geom_smooth(aes(x=value, y=Winner, colour=variable), method=lm) +
+  facet_wrap(~variable, scales="free_x")
+```
+This graph strongly suggests that states with higher income per capita levels tend to be won by Joe Biden.
+```{r}
+# select the variables relating to income
+DataVisualisaionIncome <- BidenTrumpWinner %>% select(Winner, Poverty, IncomePerCap)
+VisualisationIncome <- melt(DataVisualisaionIncome, id.vars="Winner")
+ggplot(VisualisationIncome) +  # plot a point graph of the data
+  geom_point(aes(x=value, y=Winner, colour=variable)) +
+  geom_smooth(aes(x=value, y=Winner, colour=variable), method=lm) +
+  facet_wrap(~variable, scales="free_x")
+```
+This graph shows that states with a higher percentage of people employed in professional jobs tend to be won by Joe Biden. States with high levels of construction and production jobs are likely to be won by Donald Trump.
+```{r}
+# select the variables relating to occupation
+DataVisualisaionJobs <- BidenTrumpWinner %>% select(Winner, Professional, Service, 
+                                                    Office, Construction, Production)
+VisualisationJobs <- melt(DataVisualisaionJobs, id.vars="Winner")
+ggplot(VisualisationJobs) +   # plot a point graph of the data
+  geom_point(aes(x=value, y=Winner, colour=variable)) +
+  geom_smooth(aes(x=value, y=Winner, colour=variable), method=lm) +
+  facet_wrap(~variable, scales="free_x")
+```
+This graph suggests that states with higher levels of Covid-19 cases tend to be won by Donald Trump whereas states with higher levels of deaths from Covid-19 tend to be won by Joe Biden. 
+```{r}
+# select the variables relating to Covid-19, these are the variable I created
+DataVisualisaionCovid <- BidenTrumpWinner %>% select(Winner, CasesPerPopulationPercent, DeathsPerPopulationPercent)    # plot a point graph of the data
+VisualisationCovid <- melt(DataVisualisaionCovid, id.vars="Winner")
+ggplot(VisualisationCovid) +
+  geom_point(aes(x=value, y=Winner, colour=variable)) +
+  geom_smooth(aes(x=value, y=Winner, colour=variable), method=lm) +
+  facet_wrap(~variable, scales="free_x")
+```
+I will perform a preliminary logistic regression to quantitatively understand which variables have the most effect on state outcome. For this logistic regression model, I will only be considering variables that appeared to influence the state outcome during data visualization. 
+
+First the winner column is turned into a Binary classifier. 
+```{r}
+BidenTrumpWinner$Winner[BidenTrumpWinner$Winner == "Donald Trump"] <- "0"
+BidenTrumpWinner$Winner[BidenTrumpWinner$Winner == "Joe Biden"] <- "1"
+```
+A new dataset is created that only contains the target variable and the variables that will be used in the logistic regression model.
+```{r}
+LogisticData1 <- BidenTrumpWinner %>% select(Winner, White, Asian, Hispanic, 
+                                             IncomePerCap, Professional, Construction, 
+                                             Production, CasesPerPopulationPercent, 
+                                             DeathsPerPopulationPercent)
+```
+The new dataset is split into train and test sets at an 80:20 ratio and the parameters of the logistic regression model are set.
+```{r}
+train_df <- head(LogisticData1, n=0.8*(nrow(LogisticData1)))  # training dataset
+valid_df <- tail(LogisticData1, n=0.2*(nrow(LogisticData1)))  # testing dataset
+
+p <- 9   # number of model features
+options(warn=-1)
+train_X <- train_df[,c(2:10)]    # split the train and test sets into descriptive 
+train_y <- as.numeric(train_df$Winner)   # and target variables
+valid_X <- valid_df[,c(2:10)]
+valid_y <- as.numeric(valid_df$Winner)
+tN <- length(train_y)   # obtain parameters for the logistic regression
+tN_new <- length(valid_y)
+tX_new <- valid_X
+```
+I have given each parameter a prior distribution ~ N(0,5). The distributions have a mean of 0 to ensure that they are unbiased. A variance of 5 is sufficiently large on the log scale to allow most types of effects. The stan linear regression model is then run using 2 chains.
+```{r, message=FALSE, warning=FALSE, include=FALSE}
+ta <- 0    # obtain parameters for the logistic regression
+tSigma_a <- 5
+beta0 <- rep(0,p)
+tSigma_b <- rep(5,p)
+# create and run the logistic regression
+LogisticData1 <- list(N=tN, p=p, X=as.matrix(train_X), y=train_y, N_new=tN_new, 
+                     X_new=as.matrix(tX_new), a=ta, Sigma_a=tSigma_a, beta0=beta0,
+                     Sigma_b=tSigma_b)
+LogReg1 <- stan("logisticRegression.stan", data=LogisticData1, chains=2)
+```
+The Rhat values are all very close to 1 and, based on 2000 samples, the effective sample sizes vary between 400 and 1500 indicating that the model has converged.
+```{r warning=FALSE}
+summary(LogReg1)$summary[1:10,]  # summary statistics of the model
+```
+The traceplots shown here are well mixed, also indicating that the model has converged.
+```{r}
+rstan::traceplot(LogReg1, pars=c("alpha","beta")) 
+```
+Due to the restricted sample size of the dataset, the parameters that are kept in the model must be chosen carefully. The model must have enough degrees of freedom so that the data suitably swamps the prior distributions. Therefore I have chosen to follow the '10% rule of thumb' and only include the 6 most influential parameters from the previous regression model. I have formed a new dataset using these parameters. This dataset will form the basis of the final linear regression model. 
+```{r}
+LogisticData2 <- BidenTrumpWinner %>% select(Winner, Asian, Poverty, Professional,
+                                             Production, Construction, CasesPerPopulationPercent)
+```
+It is useful to create a confusion matrix in order to visualize the performance of a classification model. 
+```{r}
+ConfusionMatrix <- function(Classifier, Truth){
+  if(!(length(Classifier)==length(Truth))) # vectors must be the same size
+    stop("Fix vector length")
+  if(is.logical(Classifier))
+    Classifier <- as.integer(Classifier)
+  WhichClass0s <- which(Classifier < 1) 
+  ZeroCompare <- Truth[WhichClass0s]
+  Predicted0 <- c(length(ZeroCompare)-sum(ZeroCompare), sum(ZeroCompare))
+  WhichClass1s <- which(Classifier > 0)
+  OnesCompare <- Truth[WhichClass1s]
+  Predicted1 <- c(length(OnesCompare)-sum(OnesCompare), sum(OnesCompare))
+  ConMatrix <- cbind(Predicted0, Predicted1)
+  row.names(ConMatrix) <- c("Actual 0", "Actual 1")
+  colnames(ConMatrix) <- c("Pred 0", "Pred 1")
+  ConMatrix # return the confusion matrix of a binary classifier
+}  
+```
+I have defined an empty confusion matrix, the results of the linear regression model will be added to this. The 'folds' variable contains a 10-fold partition of the states. I have also stated a non-informative, N(0,5), prior distribution for all of the parameters.
+```{r}
+FullConMatrix2 <- 0 # initialise an empty confusion matrix
+# create the parameters of the logistic model
+p <- 6
+ta <- 0
+Sigma <- 5
+tSigma_a <- Sigma
+beta0 <- rep(0,p)
+tSigma_b <- rep(Sigma,p)
+```
+```{r}
+# create the indexes that will be used in the k-fold  cross validation
+folds = list(c(1,2,3,4,5), c(6,7,8,9,10), c(11,12,13,14,15), c(16,17,18,19,20), 
+             c(21,22,23,24,25), c(26,27,28,29,30), c(31,32,33,34,35), c(36,37,38,39,40),
+             c(41,42,43,44,45),c(46,47,48,49,50,51))
+```
+I now run the logistic regression model on the dataset using a 10-fold cross validation.
+```{r}
+for (i in folds){  # iterate over each fold
+  train_df <- LogisticData2[-i,]  # use each fold to create test and train sets
+  valid_df <- LogisticData2[i,]
+  train_X <- train_df[,c(2:7)]
+  train_y <- as.numeric(train_df$Winner)
+  valid_X <- valid_df[,c(2:7)]
+  valid_y <- as.numeric(valid_df$Winner)
+
+  tN <- length(train_y)   # create parameters for the logistic regression model
+  tN_new <- length(valid_y)
+  tX_new <- valid_X
+  # create and run the model
+  LogisticData <- list(N=tN, p=p, X=as.matrix(train_X), y=train_y, N_new=tN_new, 
+                     X_new=as.matrix(tX_new), a=ta, Sigma_a=tSigma_a, beta0=beta0,
+                     Sigma_b=tSigma_b)
+  LogReg2 <- stan("logisticRegression.stan", data=LogisticData, chains=2)
+  # obtain the predictions
+  Predictions <- rstan::extract(LogReg2, pars=c("alpha", "beta", "eta"), include=FALSE)
+  
+  PostPredProbsJoint <- 1/(1+exp(-Predictions$eta_new))   # apply logit function
+  postPredProbs <- apply(PostPredProbsJoint,2,mean)
+  Classifier <- postPredProbs > 0.5  # classify each prediction
+  # add the confusion matrix for each iteration to the total confusion matrix
+  FullConMatrix2 <- FullConMatrix2 + ConfusionMatrix(Classifier=Classifier, 
+                                                     Truth=valid_y)
+}
+```
+The Rhat values are all very close to 1. Based on 2000 samples, the effective sample sizes are all around 400, suggesting that the model has converged.
+```{r}
+summary(LogReg2)$summary[1:7,]
+```
+The traceplots are well mixed indicating that the model has converged.
+```{r}
+rstan::traceplot(LogReg2, pars=c("alpha","beta"))
+```
+The linear regression model is 86% accurate at predicting who won the state. We can therefore conclude that the variables that have been used in the model can be used as good predictors for state outcomes.
+```{r}
+FullConMatrix2
+accuracy <- sum(diag(FullConMatrix2)/sum(FullConMatrix2))  # accuracy equation
+cat('The accuracy of the model is:', accuracy)
+```
+It is useful to analyse the posterior distributions of the parameters to assess what affect the variables had on the model.
+```{r}
+ParameterData2 <- as.matrix(LogReg2)[,1:7]  # extract the parameter information from model
+mcmc_hist(ParameterData2, pars=c("alpha", "beta[1]", "beta[2]", "beta[3]", "beta[4]", 
+                                 "beta[5]", "beta[6]"))
+```
+The prior for each of the parameters of the model is a normal distribution that is centered on 0 with variance 5. This is to ensure that the priors are unbiased and can encompass all feasible possibilities for the posterior distributions. I will perform sensitivity analysis on the priors in order to analyse the robustness of the model. To do so, I will change the prior distributions of the model parameters to have a variance of 2.5 and 7.5 and analyse the effect that this has on the posterior distributions. 
+
+Here I set the variance to 2.5.
+```{r}
+## variance = 2.5
+FullConMatrix3 <- 0
+p <- 6
+ta <- 0
+Sigma <- 2.5   # the only thing that has changed in the model is the variance 
+tSigma_a <- Sigma
+beta0 <- rep(0,p)
+tSigma_b <- rep(Sigma,p)
+```
+```{r}
+for (i in folds){   # repeat as done previously
+  train_df <- LogisticData2[-i,]
+  valid_df <- LogisticData2[i,]
+  train_X <- train_df[,c(2:7)]
+  train_y <- as.numeric(train_df$Winner)
+  valid_X <- valid_df[,c(2:7)]
+  valid_y <- as.numeric(valid_df$Winner)
+
+  tN <- length(train_y)
+  tN_new <- length(valid_y)
+  tX_new <- valid_X
+
+  LogisticData <- list(N=tN, p=p, X=as.matrix(train_X), y=train_y, N_new=tN_new, 
+                     X_new=as.matrix(tX_new), a=ta, Sigma_a=tSigma_a, beta0=beta0,
+                     Sigma_b=tSigma_b)
+  LogReg3 <- stan("logisticRegression.stan", data=LogisticData, chains=2)
+  Predictions <- rstan::extract(LogReg3, pars=c("alpha", "beta", "eta"), include=FALSE)
+  
+  PostPredProbsJoint <- 1/(1+exp(-Predictions$eta_new))   # Logit function ?
+  postPredProbs <- apply(PostPredProbsJoint,2,mean)
+  Classifier <- postPredProbs > 0.5
+  FullConMatrix3 <- FullConMatrix3 + ConfusionMatrix(Classifier=Classifier, 
+                                                     Truth=valid_y)
+}
+```
+It is evident from the summary statistics and traceplots that the parameters of the model have converged.
+```{r}
+summary(LogReg3)$summary[1:7,]
+```
+```{r}
+rstan::traceplot(LogReg3, pars=c("alpha","beta"))
+```
+The parameters' posterior distributions when the variance of the prior is 2.5 are very similar to the parameters' posterior distributions when the variance is  5. 
+```{r}
+ParameterData3 <- as.matrix(LogReg3)[,1:7]  # extract the posterior distributions
+mcmc_hist(ParameterData3, pars=c("alpha", "beta[1]", "beta[2]", "beta[3]", "beta[4]", 
+                                 "beta[5]", "beta[6]"))
+```
+The accuracy of the model is unchanged.
+```{r}
+FullConMatrix3
+accuracy <- sum(diag(FullConMatrix3)/sum(FullConMatrix3)) 
+cat('The accuracy of the model is:', accuracy)
+```
+In order to perform a symmetric sensitivity analysis, I change the variance of the prior distributions to 7.5.
+```{r}
+FullConMatrix4 <- 0  
+p <- 6
+ta <- 0
+Sigma <- 7.5 # the model is the sam but variance now equals 7.5
+tSigma_a <- Sigma
+beta0 <- rep(0,p)
+tSigma_b <- rep(Sigma,p)
+```
+```{r}
+for (i in folds){
+  train_df <- LogisticData2[-i,]
+  valid_df <- LogisticData2[i,]
+  train_X <- train_df[,c(2:7)]
+  train_y <- as.numeric(train_df$Winner)
+  valid_X <- valid_df[,c(2:7)]
+  valid_y <- as.numeric(valid_df$Winner)
+
+  tN <- length(train_y)
+  tN_new <- length(valid_y)
+  tX_new <- valid_X
+
+  LogisticData <- list(N=tN, p=p, X=as.matrix(train_X), y=train_y, N_new=tN_new, 
+                     X_new=as.matrix(tX_new), a=ta, Sigma_a=tSigma_a, beta0=beta0,
+                     Sigma_b=tSigma_b)
+  LogReg4 <- stan("logisticRegression.stan", data=LogisticData, chains=2)
+  Predictions <- rstan::extract(LogReg4, pars=c("alpha", "beta", "eta"), include=FALSE)
+  
+  PostPredProbsJoint <- 1/(1+exp(-Predictions$eta_new))   # Logit function ?
+  postPredProbs <- apply(PostPredProbsJoint,2,mean)
+  Classifier <- postPredProbs > 0.5
+  FullConMatrix4 <- FullConMatrix4 + ConfusionMatrix(Classifier=Classifier, 
+                                                     Truth=valid_y)
+}
+```
+The model has converged, this is evident from the summary statistics and the well mixed traceplots.
+```{r}
+summary(LogReg4)$summary[1:7,]
+```
+```{r}
+rstan::traceplot(LogReg4, pars=c("alpha","beta"))
+```
+The parameters' posterior distributions are similar to those obtained with different variances. 
+```{r}
+ParameterData4 <- as.matrix(LogReg4)[,1:7] # extract and plot the posterior distributions
+mcmc_hist(ParameterData4, pars=c("alpha", "beta[1]", "beta[2]", "beta[3]", "beta[4]", 
+                                 "beta[5]", "beta[6]"))
+```
+The same accuracy score is achieved.
+```{r}
+FullConMatrix4
+accuracy <- sum(diag(FullConMatrix4)/sum(FullConMatrix4)) 
+cat('The accuracy of the model is:', accuracy)
+```
+The model converges for a prior variance of 2.5, 5 and 7.5, showing that the model is robust enough to cope with a range of different prior distributions. Thus, it can be concluded that the model is insensitive to the prior distribution.
+
+In order to calculate the Monte Carlo estimate of the parameters, the sum of the parameters must be divided by the sample size (2000). 
+```{r}
+Param_n <- c(2000, 2000, 2000, 2000, 2000, 2000, 2000)  # a list of sample sizes
+Param_sum <- colSums(ParameterData2)
+MC_estimate <- Param_sum/Param_n # divided the sum of each parameter samples by 2000
+MC_estimate
+```
+To calculate the Monte Carlo errors of the parameters, the standard deviations of the parameters are divided by the square root of their effective sample sizes. The Monte Carlo errors are small for all of the parameters. Therefore, we can be confident that the Monte Carlo estimates are accurate representations of the parameter values.
+```{r}
+Param_n_eff <- summary(LogReg2)$summary[1:7,][,"n_eff"] # obtain the effective sample
+Param_sd <- apply(ParameterData2, 2, sd)                   # size
+MC_error <- Param_sd/sqrt(Param_n_eff)   # apply MC error formula
+MC_error
+```
+The winner of the state is a binary classifier, with Joe Biden winning being represented by 1 and Donald Trump winning being represented by 0. Therefore, negative Monte Carlo expectations of parameter values mean that an increase in that feature increases the likelihood that a state will be won by Donald Trump and vice versa. The beta[6] variable is the most influential model feature with a MC estimate of almost double any other parameter. The variables all have the same order of magnitude, therefore we can conclude that the beta[6] variable is almost twice as important in deciding state outcome as any other variable. 
+
+The beta[6] variable is the percentage of people with Covid-19 in each state. Therefore, rates of Covid-19 did have a significant impact on state outcome in the election. The MC estimate of the beta[6] parameter is negative, therefore high rates of Covid-19 were a contributing factor in helping Donald Trump win states. Logistic regression is a non-linear model, therefore it is difficult to quantify the direct effects that Covid-19 had on state outcome.
+
+Joe Biden won despite the detrimental effects that Covid-19 rates had on his performance in certain states. Therefore, although rates of Covid-19 effected individual state outcomes, it did not effect who won the election.
+

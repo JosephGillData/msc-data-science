@@ -1,0 +1,476 @@
+---
+title: "Using Bayseian Statistics to Analyse Kanye West's Effect on the 2020 US Elections"
+author: "Candidate Number: 087074"
+date: "Jaunary 2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)  
+library(adaptMCMC)
+library(bayesplot)
+library(coda)
+```
+
+# Question 1 
+Suppose that the the probability $\theta$ of voting for a candidate $j=1 \dots K$ in all 51 US states is $\theta_{j}$ such that $\sum_{j = 1}^{K}\theta_{j} = 1$. The distribution of votes in a state can be modeled as a multinomial distribution with probability mass function
+$$p(y|\theta) = \frac{N!}{y_{1}! \dots y_{K}!} \theta_{1}^{y_{1}} \dots \theta_{K}^{y_{K}}$$
+Assume that the probability of voting for a candidate is the same in all 51 states. The distribution of votes in each state can be multiplied together to obtain the likelihood function of votes in an election.
+
+$$p(y|\theta) = \prod_{i=1}^{N_{s}} \frac{N!}{y_{i1}! \dots y_{iK}!} \theta_{1}^{y_{i1}} \dots \theta_{K}^{y_{iK}}$$
+
+The $\frac{N!}{y_{1}! \dots y_{K}!}$ term does not vary with $\theta$, therefore it can be treated as a constant.
+$$p(y|\theta) \propto \prod_{i=1}^{N_{s}} \theta_{1}^{y_{i1}} \dots \theta_{K}^{y_{iK}}$$
+$$p(y|\theta) \propto (\theta_{1}^{y_{11}} \dots \theta_{1}^{y_{N_{s}1}}) \dots (\theta_{K}^{y_{11}} \dots \theta_{K}^{y_{N_{s}1}})$$
+$$p(y|\theta) \propto \theta_{1}^{\sum_{i = 1}^{N_{s}} y_{ij}} \dots \theta_{K}^{\sum_{i = 1}^{N_{s}} y_{iK}}$$ 
+$$p(y|\theta) \propto \prod_{j=1}^{K} \theta_{j}^{\sum_{i = 1}^{N_{s}}y_{ij}}$$
+
+# Question 2
+The probability $\theta$ of voting for each candidate will not be the same in every state Therefore, we model the probabilities in a multinomial regression as functions of covariates. We have a linear predictor,
+$$\eta = X\beta$$
+where $\beta$ is the regression coefficient and $X$ contains the covariates. The softmax function maps $\eta$ to the multinomial probabilities $\theta$. The probability that a random voter votes candidate k is 
+$$\theta_{sk} = \frac{e^{\eta_{sk}}}{\sum_{i}^{}\eta_{si}}$$
+To ensure the model is identifiable, we fix $\eta_{i1}$ to be $0$ for all $i$.
+
+The probability of voting for one of the candidates in each state, $s$, is $1$.
+$$\sum_{k = 1}^{K}\theta_{sk} = 1$$
+$$\sum_{k = 1}^{K}\theta_{sk} = \frac{e^{\eta_{s1}}}{\sum_{i}^{}\eta_{si}} + \dots + \frac{e^{\eta_{sK}}}{\sum_{i}^{}\eta_{si}}$$
+$$\sum_{k = 1}^{K}\theta_{sk} = \frac{\sum_{k=1}^{K}e^{\eta_{sk}}}{\sum_{i=1}^{K}e^{\eta_{si}}}$$
+This implies that 
+$$\theta_{sk} = \frac{e^{\eta_{sk}}}{\sum_{i=1}^{K}e^{\eta_{si}}}$$
+$$\theta_{s1} = \frac{e^{\eta_{s1}}}{\sum_{i=1}^{K}e^{\eta_{si}}}$$
+Where $\eta_{s1} = 0$ for all $s$, therefore
+$$\theta_{s1} = \frac{1}{\sum_{i=1}^{K}e^{\eta_{si}}}$$
+$$\frac{\theta_{sk}}{\theta_{s1}} = \frac{\frac{e^{\eta_{s1}}}{\sum_{i=1}^{K}e^{\eta_{si}}}}{\frac{1}{\sum_{i=1}^{K}e^{\eta_{si}}}}$$
+
+$$\frac{\theta_{sk}}{\theta_{s1}} = {e^{\eta_{sk}}} $$
+$$\log{(e^{\eta_{sk}})} = \log{(\frac{\theta_{sk}}{\theta_{s1}})}$$
+$$\eta_{sk} = \log{(\frac{\theta_{sk}}{\theta_{s1}})}$$
+
+# Question 3
+We can use Bayes Theorem to calculate the posterior distribution of $\beta$.
+$$p(\beta|\mathbf{y}) = \frac{p(\mathbf{y}|\theta)\pi(\beta)}{p(\mathbf{y})}$$
+$$p(\beta|\mathbf{y}) \propto p(\mathbf{y}|\beta)\pi(\beta)$$
+The prior distribution $\beta$ is $\beta_{i1} = 0$ for all $i$ and the other values of the $\beta$ matrix have independent normal distributions with constant variance $\sigma^2$. 
+$$\pi(\beta) = \frac{1}{\sigma\sqrt{2\pi}}exp\{-\frac{1}{2}(\frac{\beta-\mu}{\sigma^2})\}$$
+We calculate the likelihood function of $\beta$, $p(\mathbf{y}|\beta)$ by applying the change of variable formula to $p(\mathbf{y}|\theta)$
+$$f_{\beta}(\beta) = |\frac{\partial g^{-1}(\beta)}{\partial \beta}|f_{\theta}(g^{-1}(\beta))$$
+We calculate the function $\theta = g^{-1}(\beta)$
+$$\eta_{sk} = X_{s}B_{k}$$
+$$log(\frac{\theta_{sk}}{\theta_{s1}}) = X_{s}B_{k}$$
+where 
+$$\theta_{s1} = \frac{e^{\eta_{s1}}}{\sum_{i}e^{\eta_{si}}} = \frac{1}{\sum_{i}e^{\eta_{si}}}$$
+$$log(\theta_{sk}\sum_{i}e^{\eta_{si}}) = X_{s}B_{k}$$
+$$g^{-1}(\beta) = \theta_{sk} = \frac{e^{X_{s}B_{k}}}{\sum_{i}e^{\eta_{si}}}$$
+We use this equation to calculate the change of variable formula,
+$$|\frac{\partial g^{-1}(\beta)}{\partial \beta}| = \frac{X_{s}e^{X_{s}B_{k}}}{\sum_{i}e^{\eta_{si}}}$$
+$$f_{\theta}(g^{-1}(\beta)) =  \prod_{j=1}^{K} (\frac{e^{X_{s}B_{k}}}{\sum_{i}e^{\eta_{si}}})^{\sum_{i = 1}^{N_{s}}y_{ij}}$$
+$$p(\mathbf{y}|\beta) = \frac{X_{s}e^{X_{s}B_{k}}}{\sum_{i}e^{\eta_{si}}}\prod_{j=1}^{K}(\frac{e^{X_{s}B_{k}}}{\sum_{i}e^{\eta_{si}}})^{\sum_{i = 1}^{N_{s}}y_{ij}}$$
+By substituting this into the formula for the posterior, we obtain
+$$p(\beta|\mathbf{y}) = \frac{X_{s}e^{X_{s}B_{k}}}{\sum_{i}e^{\eta_{si}}}\prod_{j=1}^{K}(\frac{e^{X_{s}B_{k}}}{\sum_{i}X_{sj}B_{ji}})^{\sum_{i = 1}^{N_{s}}y_{ij}}\frac{1}{\sigma\sqrt{2\pi}}exp\{-\frac{1}{2}(\frac{\beta-\mu}{\sigma^2})\}$$
+$$p(\beta|\mathbf{y}) = A\prod_{j=1}^{K}(\frac{e^{X_{s}B_{k}}}{\sum_{i}X_{sj}B_{ji}})^{\sum_{i = 1}^{N_{s}}y_{ij}}exp\{-\frac{1}{2}(\frac{\beta}{\sigma^2})\}$$
+$$\log p(\beta|\mathbf{y}) = \log(A\prod_{j=1}^{K}(\frac{e^{X_{s}B_{k}}}{\sum_{i}X_{sj}B_{ji}})^{\sum_{i = 1}^{N_{s}}y_{ij}}e^{-\frac{\beta}{2\sigma^2}})$$
+$$\log p(\beta|\mathbf{y}) = C + \log(\prod_{j=1}^{K}(\frac{e^{X_{s}B_{k}}}{\sum_{i}X_{sj}B_{ji}})^{\sum_{i = 1}^{N_{s}}y_{ij}}e^{-\frac{\beta}{2\sigma^2}})$$
+$$\log p(\beta|\mathbf{y}) = C + \log(e^{-\frac{\beta}{2\sigma^2}}) + {\sum_{i = 1}^{N_{s}}y_{ij}} \log(\frac{e^{X_{s}B_{k}}}{\sum_{i}X_{sj}B_{ji}})$$
+$$\log p(\beta|\mathbf{y}) = C + -\frac{1}{2\sigma^2}\sum_{i=1}^{p}\sum_{j=2}^{K}{\beta_{ij}^2} + \sum_{s = 1}^{N_{s}}\sum_{k = 1}^{K}y_{sk}(( \log(e^{X_{s}B_{k}})-\log({\sum_{i}X_{sj}B_{ji}}))$$
+$$\log p(\beta|\mathbf{y}) = C + -\frac{1}{2\sigma^2}\sum_{i=1}^{p}\sum_{j=2}^{K}{\beta_{ij}^2} + \sum_{s = 1}^{N_{s}}\sum_{k = 1}^{K}y_{sk}(\sum_{j = 1}{X_{sj}B_{jk}})-\sum_{i}exp\{\sum_{j}X_{sj}B_{ji}\})$$
+where C is a constant that we can ignore during sampling
+
+
+
+# Question 4
+I will sample from the log posterior distribution of $\beta$,
+$p(\beta|\mathbf{y})$ by using the Markov Chain Monte Carlo method.
+```{r, include=FALSE}
+library(tidyverse)  
+library(adaptMCMC)
+library(bayesplot)
+library(coda)
+```
+The rds file "USelectionData.rds" stores data on the 2020 US elections.
+```{r}
+USelectionData <- readRDS("USelectionData.rds") # dataset
+```
+I have transformed the raw data into a dataset that is in a more useful format for analysis. The dataset only contains data on the candidates that I will be analysing.
+```{r}
+# candidates used in analyses
+MyCandidates <- c("Donald Trump", "Joe Biden", "Jo Jorgensen", "Kanye West")
+USelectionOthers <- group_by(USelectionData, State) %>%
+  mutate(Others = sum(TotalVotes[!(Candidate %in% MyCandidates)])) %>% ungroup()
+USelectionOthers <- filter(USelectionOthers, Candidate=="Donald Trump")
+USelectionOthers <- mutate(USelectionOthers, Party = "OTH", TotalVotes=Others,
+                           Candidate="Others")
+USelectionOthers <- dplyr::select(USelectionOthers, -Others)
+USelectionDataNew <- rbind(USelectionData, USelectionOthers)
+# create a dataset using only the key candidates
+USelectionDataNew <- filter(USelectionDataNew, Candidate 
+                            %in% c(MyCandidates, "Others")) %>% arrange(State)
+```
+The statistics on the sex, race, income level and occupation of states are all in percentages, whereas Covid-19 cases and deaths are not. It is important that the variables are in the same order of magnitude to ensure an accurate analysis, therefore I have transformed the total number of cases and deaths of Covid-19 per state into the percentages of cases and deaths of Covid-19 for each state.
+```{r}
+USelectionDataNew$CasesPerPopulationPercent <- 
+  (USelectionDataNew$Cases/USelectionDataNew$TotalPop)*100 # times a hundred for percent 
+USelectionDataNew$DeathsPerPopulationPercent <-            
+  (USelectionDataNew$Deaths/USelectionDataNew$TotalPop)*100
+USelectionDataNew$EmploymentPercent <-            
+  (USelectionDataNew$Employed/USelectionDataNew$TotalPop)*100
+
+```
+There are two matrices in the log posterior that are constant, $X$ and $y$. $X$ is a Ns x p (states x features of model) matrix that contains the covariates. $y$ is a Ns x K (number of states x candidates) matrix that contains the vote share outcome of the election. These matrices change depending on the features are chosen for analysis. Therefore, I have created functions that, given the features that are chosen, produce the $X$ and $y$ matrices.
+```{r}
+ProduceX <- function(df, features){ # Creating X: Ns x p (states x features of model)
+  ModelData <- df %>% select(features)
+  ModelData2 <- unique(ModelData) # This ensures that one value is taken from each state
+  X <- as.matrix(sapply(ModelData2, as.numeric))
+  return(X)
+}
+
+ProduceY <- function(df){  # Create y: Ns x K (number of states x candidates)
+  ModelData3 <- USelectionDataNew %>% select(State, Candidate, TotalVotes)
+  # Create datasets that contain the number of votes for each candidate
+  DT <- ModelData3[ModelData3$Candidate %in% c("Donald Trump"), ]
+  JB <- ModelData3[ModelData3$Candidate %in% c("Joe Biden"), ]
+  JJ <- ModelData3[ModelData3$Candidate %in% c("Jo Jorgensen"), ]
+  OT <- ModelData3[ModelData3$Candidate %in% c("Others"), ]
+  KW <- ModelData3[ModelData3$Candidate %in% c("Kanye West"), ]
+  
+  # Merge the datasets together 
+  DTJB <- merge(x = DT, y = JB, by = "State", all.x=TRUE) 
+  DTJBJJ <- merge(x = DTJB, y = JJ, by = "State", all.x=TRUE)
+  # set column names to avoid confusion
+  colnames(DTJBJJ) <- c("State", "Donald", "Donald_Vote", "Joe", "Joe_Vote",
+                        "Jo", "Jo_Vote")
+  DTJBJJOT <- merge(x = DTJBJJ, y = OT, by = "State", all.x=TRUE)
+  DTJBJJOTKW <- merge(x = DTJBJJOT, y = KW, by = "State", all.x=TRUE)
+  colnames(DTJBJJOTKW) <- c("State", "Donald", "Donald_Vote", "Joe", "Joe_Vote",
+                            "Jo", "Jo_Vote", "Other", "Other_Vote", "Kanye",
+                            "Kanye_Vote")
+  # drop the columns that do not contain vote shares
+  drops <- c("State", "Donald", "Joe", "Jo", "Other","Kanye")
+  Tester <- DTJBJJOTKW[ , !(names(DTJBJJOTKW) %in% drops)]
+  # set the vote share for states that Kanye West did not run to 0
+  Tester[is.na(Tester)] <- 0
+  y <- as.matrix(sapply(Tester, as.numeric))
+  return(y)
+}
+```
+The prior values of the $\beta$ matrix are $\beta_{i1}=0$ for all $i$, and the other entries have independent Normal priors with constant variance $\sigma^2$. $\beta$ is a $p$ X $K$ (no. of features x no. of candidates) matrix, therefore each each feature adds 4 parameters to the model. 
+
+Here I create the initial parameter values of the model, the number of which depend on the number of features chosen. The Normal prior distributions have a mean of 0 to ensure that they are unbiased and a variance of 5, this is sufficiently large on the log scale to allow most types of effects.
+```{r}
+ProduceParams <- function(df, features){  
+  ModelData <- df %>% select(features)
+  ModelData2 <- unique(ModelData)
+  p <- ncol(ModelData2)  # count the number of features, p
+  K = 5 # the number of candidates is always 5
+  mu <- 0 
+  sigma2 <- 5
+  # I create p x 4 parameters with N(0,5)
+  params <- rnorm((p*K-p),mean=0,sd=sqrt(5))
+  return(params)
+}
+```
+The log posterior of $\beta$, $p(\beta|\mathbf{y})$ is the distribution that I will be sampling from using the Markov Chain Monte Carlo algorithm. I have coded the log posterior distribution into a function that takes in the X and y matrices along with the parameters to calculate a value for the posterior.
+```{r}
+LogPosterior <- function(X=initial_X, y=initial_y, params){
+  # Create B using the parameter values
+  shaper <- dim(X)[2]
+  shaper
+  params_shaped <- matrix(params, nrow = shaper, byrow = TRUE)
+  zero_col <- rep(0, shaper)
+  B <- cbind(zero_col, params_shaped)
+  
+  # This is the posterior distribution, created in two parts (Left and Right)
+  C <- X %*% B
+  C_vec <- colSums(exp(C), na.rm = FALSE, dims = 1)
+  inside2 <- C - log(C_vec)
+  Right <- sum(y*inside2)
+  
+  mu <- 0
+  sigma2 <- 5
+  sum_B <- sum(B*B)
+  Left <- (-1/(2*sigma2))*sum_B
+  
+  Posterior <- abs(Left + Right)
+  return(Posterior)
+}
+```
+The parameter values are changed slightly in each iteration of the Markov Chain Monte Carlo algorithm. To do this, I proposed a random walk on each of the parameter values. The random walk is a Normal distribution with $\mu=0$ and $\sigma^2=5$. 
+```{r}
+Proposal <- function(params, sigma2=0.25){  
+  K <- length(params)
+  nudge <- rnorm(K,0,sigma2) # create the random walk values
+  new_params <- params + nudge # add the random walks to the parameters
+  return(new_params)
+}
+```
+This function calculates the ratio between the posterior value of the new value and the posterior value of the old value. 
+```{r}
+MHratio <- function(paramold, paramnew, X=initial_X, y=initial_y){
+  ratio <- LogPosterior(X=initial_X, y=initial_y, paramnew)/
+    LogPosterior(X=initial_X, 
+  y=initial_y, paramold)
+  return(ratio)
+}
+```
+This function is my Monte Carlo Markov Chain sampler. Here I use the functions that I have previously made to sample from the posterior distribution using the MCMC algorithm. To run, the function requires the number of iterations to do and the parameter values. The output is a list of samples from the posterior distributions.
+```{r}
+my_MCMC <- function(Niter, start_values){
+  tNames <- c('1','2','3','4','5','6','7','8') # names of parameters
+  # initialise an empty matrix to append values to
+  mcmc.out <- matrix(NA, nrow=Niter+1, ncol=length(start_values))
+  mcmc.out[1,] <- unlist(start_values)
+  colnames(mcmc.out) <- tNames
+  for (k in 2:(Niter+1)){
+    paramsafter <- Proposal(paramsbefore) # calculate new parameter values
+    mhr <- MHratio(paramold=paramsbefore, paramnew=paramsafter) # MH ratio
+    rstart <- min(c(1,mhr)) 
+    U <- runif(1,0,1)
+    if(U<rstart){ # Accept/Reject step
+      mcmc.out[k,] <- unlist(paramsafter)
+    }
+    else{
+      mcmc.out[k,] <- mcmc.out[k-1,]
+    }
+  }
+  as.mcmc.list(as.mcmc(mcmc.out)) # return a list of parameter samples
+}
+```
+# Question 5
+The MCCM function that I reated allows me to choose features of the dataset that I think will have an impact on the number of votes Kanye West obtains in a state. I have a very limited knowledge of Kanye West's voter base and online material provides little information on the matter. Therfore I have run multiple models that include different parameters in order to see which parameters have the largest effect.
+
+Each feature I include adds another 4 parameters to the model. Therefore, I have restricted the number of features in each model to 2. This is to ensure that the models have enough degrees of freedom so that the data suitably swamps the prior distributions.
+
+I create 5 models, therefore analysing the effect of 10 different features. For each model, I sample from the posterior distribution using my MCMC sampler, evaluate traceplots and produce histograms of the posterior distributions. Using data on the posterior distributions, I create Monte Carlo estimates of the parameters and form the $\beta$ matrix. I then calculate $\theta$ and have displayed the $\theta$ produced by the last model.
+
+## Black and Professional
+Here I analyse the effect that the percentage of black people and professionals in a state has on voter distribution. 
+```{r warning=FALSE}
+features <- c('Black', 'Professional') # chosen features
+N <- length(features)
+candidates <- c("Donald Trump", "Joe Biden", "Jo Jorgensen", "Others", "Kanye West")
+# create X and y values
+initial_X <- ProduceX(USelectionDataNew, features)
+initial_y <- ProduceY(USelectionDataNew)
+# initialise the parameter values
+initial_params <- ProduceParams(USelectionDataNew, features)
+paramsbefore <- initial_params
+```
+I use my MCMC sampler to sample 5000 times from the posterior distribution.
+```{r}
+N_iterations <- 5000    # sample from the my_MCMC function
+Samples <- my_MCMC(Niter=N_iterations, start_values = initial_params)
+```
+I use the sample data on the posterior distributions to create traceplots for the parameters. The traceplots are well mixed, indicating that the model has converged.
+```{r warning=FALSE}
+par(mfrow=c(8,1), mar=c(1,1,1,1))
+traceplot(Samples) # draw the traceplot for all 8 parameters
+```
+Here I display histograms of the data on the posterior distributions. The histograms appear to be normally distributed with similar variances and different means. 
+```{r warning=FALSE}
+ParameterData <- as.matrix(Samples)
+mcmc_hist(ParameterData) # plot histograms of posterior distribution samples
+```
+I have calculated Monte Carlo Estimates of the parameters using the data on the posterior distributions in order to establish an estimate of $\beta$.
+```{r}
+# apply the MC estimate formula
+Param_sum <- colSums(ParameterData)
+Param_n <- rep(N_iterations, length(Param_sum))
+MC_estimate <- Param_sum/Param_n # divided the sum of each parameter samples by 2000
+# Create B from MC estimates
+B <- cbind(matrix(rep(0, N), N, 1), t(matrix(MC_estimate, ncol = N)))
+colnames(B) <- candidates
+rownames(B) <- features
+B
+```
+I now calculate the $\theta$ matrix by applying the formula $\theta_{sk} = \frac{e^{\eta_{sk}}}{\sum_{i}^{}\eta_{si}}$.
+```{r}
+n <- initial_X %*% B  
+theta <- exp(n)/rowSums(exp(n))
+```
+
+## Poverty and Office
+I repeat my analysis using two different features. The features that I have chosen is the poverty level is states and the percentage of office workers.
+```{r warning=FALSE}
+features <- c('Poverty', 'Office') # chosen features
+N <- length(features)
+candidates <- c("Donald Trump", "Joe Biden", "Jo Jorgensen", "Others", "Kanye West")
+# create X and y values
+initial_X <- ProduceX(USelectionDataNew, features)
+initial_y <- ProduceY(USelectionDataNew)
+# initialise the parameter values
+initial_params <- ProduceParams(USelectionDataNew, features)
+paramsbefore <- initial_params
+```
+```{r}
+N_iterations <- 5000 # sample from the my_MCMC function
+Samples <- my_MCMC(Niter=N_iterations, start_values = initial_params)
+```
+The well mixed traceplots imply that the model has converged. 
+```{r warning=FALSE}
+par(mfrow=c(8,1), mar=c(1,1,1,1))
+traceplot(Samples)
+```
+```{r warning=FALSE}
+ParameterData <- as.matrix(Samples)
+mcmc_hist(ParameterData) # plot histograms of posterior distribution samples
+```
+I have obtained estimates for $\beta$ using the parameters Poverty and Office.
+```{r}
+Param_sum <- colSums(ParameterData)
+Param_n <- rep(N_iterations, length(Param_sum))
+MC_estimate <- Param_sum/Param_n # divided the sum of each parameter samples by 2000
+# Create B from MC estimates
+B <- cbind(matrix(rep(0, N), N, 1), t(matrix(MC_estimate, ncol = N)))
+colnames(B) <- candidates
+rownames(B) <- features
+B
+```
+```{r}
+n <- initial_X %*% B
+theta <- exp(n)/rowSums(exp(n))
+```
+
+## Asian and Construction
+I repeat my analysis using the features Asian and Construction.
+```{r warning=FALSE}
+features <- c('Asian', 'Construction') # chosen features
+N <- length(features)
+candidates <- c("Donald Trump", "Joe Biden", "Jo Jorgensen", "Others", "Kanye West")
+# create X and y values
+initial_X <- ProduceX(USelectionDataNew, features)
+initial_y <- ProduceY(USelectionDataNew)
+# initialise the parameter values
+initial_params <- ProduceParams(USelectionDataNew, features)
+paramsbefore <- initial_params 
+```
+```{r}
+N_iterations <- 5000 # sample from the my_MCMC function
+Samples <- my_MCMC(Niter=N_iterations, start_values = initial_params)
+```
+The well mixed traceplots imply that the model has converged. 
+```{r warning=FALSE}
+par(mfrow=c(8,1), mar=c(1,1,1,1)) 
+traceplot(Samples) # draw the traceplot for all 8 parameters
+```
+```{r warning=FALSE}
+ParameterData <- as.matrix(Samples)
+mcmc_hist(ParameterData) # plot histograms of posterior distribution samples
+```
+I have obtained estimates for $\beta$ using the parameters Asian and Construction.
+```{r}
+Param_sum <- colSums(ParameterData)
+Param_n <- rep(N_iterations, length(Param_sum))
+MC_estimate <- Param_sum/Param_n # divided the sum of each parameter samples by 2000
+# Create B from MC estimates
+B <- cbind(matrix(rep(0, N), N, 1), t(matrix(MC_estimate, ncol = N)))
+colnames(B) <- candidates
+rownames(B) <- features
+B
+```
+```{r }
+n <- initial_X %*% B
+theta <- exp(n)/rowSums(exp(n))
+```
+
+## CasesPerPopulationPercent and DeathsPerPopulationPercent
+I repeat my analysis using the features CasesPerPopulationPercent and DeathsPerPopulationPercent to analyse the effect that Covid-19 had on Kanye West's number of votes in states.
+```{r warning=FALSE}
+# chosen features
+features <- c("CasesPerPopulationPercent", "DeathsPerPopulationPercent") 
+N <- length(features)
+candidates <- c("Donald Trump", "Joe Biden", "Jo Jorgensen", "Others", "Kanye West")
+# create X and y values
+initial_X <- ProduceX(USelectionDataNew, features)
+initial_y <- ProduceY(USelectionDataNew)
+# initialise the parameter values
+initial_params <- ProduceParams(USelectionDataNew, features)
+paramsbefore <- initial_params
+```
+
+
+```{r}
+N_iterations <- 5000 # sample from the my_MCMC function
+Samples <- my_MCMC(Niter=N_iterations, start_values = initial_params)
+```
+The well mixed traceplots imply that the model has converged. 
+```{r warning=FALSE}
+par(mfrow=c(8,1), mar=c(1,1,1,1))
+traceplot(Samples) # draw the traceplot for all 8 parameters
+```
+```{r warning=FALSE}
+ParameterData <- as.matrix(Samples)
+mcmc_hist(ParameterData) # plot histograms of posterior distribution samples
+```
+I have obtained estimates for $\beta$ using the parameters Asian and Construction.
+```{r}
+Param_sum <- colSums(ParameterData)
+Param_n <- rep(N_iterations, length(Param_sum))
+MC_estimate <- Param_sum/Param_n # divided the sum of each parameter samples by 2000
+# Create B from MC estimates
+B <- cbind(matrix(rep(0, N), N, 1), t(matrix(MC_estimate, ncol = N)))
+colnames(B) <- candidates
+rownames(B) <- features
+B
+```
+```{r}
+n <- initial_X %*% B
+theta <- exp(n)/rowSums(exp(n))
+```
+## EmploymentPercent and Service
+I repeat my analysis using the features EmploymentPercent and Service.
+```{r warning=FALSE}
+features <- c("EmploymentPercent", "Service") # chosen features
+N <- length(features)
+candidates <- c("Donald Trump", "Joe Biden", "Jo Jorgensen", "Others", "Kanye West")
+# create X and y values
+initial_X <- ProduceX(USelectionDataNew, features)
+initial_y <- ProduceY(USelectionDataNew)
+# initialise the parameter values
+initial_params <- ProduceParams(USelectionDataNew, features)
+paramsbefore <- initial_params
+```
+```{r}
+N_iterations <- 5000 # sample from the my_MCMC function
+Samples <- my_MCMC(Niter=N_iterations, start_values = initial_params)
+```
+The well mixed traceplots imply that the model has converged. 
+```{r warning=FALSE}
+par(mfrow=c(8,1), mar=c(1,1,1,1))
+traceplot(Samples) # draw the traceplot for all 8 parameters
+```
+```{r warning=FALSE}
+ParameterData <- as.matrix(Samples)
+mcmc_hist(ParameterData) # plot histograms of posterior distribution samples
+```
+I have obtained estimates for $\beta$ using the parameters EmploymentPercent and Service
+```{r}
+Param_sum <- colSums(ParameterData)
+Param_n <- rep(N_iterations, length(Param_sum))
+MC_estimate <- Param_sum/Param_n # divided the sum of each parameter samples by 2000
+# Create B from MC estimates
+B <- cbind(matrix(rep(0, N), N, 1), t(matrix(MC_estimate, ncol = N)))
+colnames(B) <- candidates
+rownames(B) <- features
+B
+```
+This time, I have displayed the $\theta$ matrix. This shows the probability of voting for each of the candidates in the different states. 
+```{r}
+n <- initial_X %*% B
+theta <- exp(n)/rowSums(exp(n))
+theta
+```
+
+# Question 6
+My analysis shows that Kanye West obtains his highest vote share in states that have a high percentage of black people and a high level of employment. As Kanye West is a new candidate, his voters have most likely switched from a previous party. The candidate that also performs well in states with a high percentage of black people and a high level of employment is Joe Biden, therefore Kanye West's voters have probably switched from voting for Biden to voting for Kanye West. 
+
+Kanye West obtained a very small number of votes, totaling 60,000, and the most votes that West obtained in a single state was Tennessee with 10,258 votes. Out of the 12 states that Kanye West ran in, the smallest number of votes to decide a state was Minnesota which Joe Biden won by a margin of 233,394 votes. This highlights the negligible difference that Kanye West had in the election. It is reasonable to assume that if Kanye West did run in all 51 states, he would also have had negligible effects and not impacted on the outcome on any of the states. However, if Kanye West does run in 2024, in all 51 states and with a full political campaign, he could then start to be a factor in deciding state outcomes.
+
+# Question 7
+My Markov Chain Monte Carlo sampler allows me to select different features from the data and sample from the posterior distribution. The model produces well mixed traceplots, indicating that convergence has occurred. The model also produces reasonable posterior distributions for the parameters. Therefore, I am confident that the majority of the model is working correctly. However, the posterior distributions that I obtain for the parameters change every time that I run the model, this causes the  Monte Carlo Estimate of $\beta$ that I derive from these posteriors to also change every time I run the model. Therefore, any conclusions that I have made are not scientifically valid as they are not reproducible.
+
+In order to calculate the multinomial probabilities for each state, I applied the formula $\eta = X\beta$ to calculate $\eta$ and then applied the softmax function that links the $\eta$ matrix to $\theta$. The values of $\theta$ that I obtained were either very close to 0 or very close to 1, suggesting that a random voter's vote for a candidate in each state could be predicted with almost certain probability. This is not realistic as there is a high level of uncertainty in voter prediction.
+
+The dataset that I have performed my analysis on gives features of each of the states. It would be useful to have a dataset that specifies features of the candidates in each state. For example, the percentage of Kanye West's voters that were employed in each state or the percentage of Donald Trump's voters that were Hispanic in each state. This would give an insight into the type of voters that are voting for each candidate in each state. Using this data, I could analyse how Kanye West's voters compare in similarity to other candidates to see which candidate's vote share he would be influencing most. 
